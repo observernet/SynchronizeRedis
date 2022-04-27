@@ -1,5 +1,5 @@
-#ifndef _DL_COMMON_H
-#define _DL_COMMON_H
+#ifndef _COMMON_DEFINE_H
+#define _COMMON_DEFINE_H
 
 #include <server_define.h>
 #include <hiredis.h>
