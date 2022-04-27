@@ -1,0 +1,111 @@
+/*****************************************************
+ * 프로그램ID	: dl_tr32117.pc
+ * 프로그램명	: 기간별 손익 조회
+ * 작성일		: 2009/12/10
+ * 작성자		: 김성철
+ *****************************************************/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <errno.h>
+
+#include <ft_common.h>
+#include <ora_common.h>
+
+/*************************************************************************************
+ * Defines.....
+ *************************************************************************************/
+
+char program_name[64];
+
+
+/*************************************************************************************
+ * 함수정의
+ *************************************************************************************/
+
+struct update_user_info
+{
+    char        ncode[8];
+    char        phone[32];
+    char        email[144];
+    char        name[64];
+    char        photo[88];
+    char        login_passwd[32];
+    char        cert_passwd[16];
+    int         user_level;
+    char        status;
+    int         error_count;
+};
+
+
+ /*************************************************************************************
+ * 구현 시작..
+ *************************************************************************************/
+
+int	update_user_info(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, sql_context ctx)
+{
+    int i;
+    char redis_value[MAX_BUFFER];
+    redisReply *reply;
+
+    struct update_user_info user;
+
+    SetProgramName(pname);
+	mdb = p;
+
+    /* 오라클사용 등록 */
+	struct sqlca sqlca;
+	EXEC SQL CONTEXT USE :ctx;
+
+    /* 키갯수를 체크한다 */
+    if ( key->count != 3 )
+    {
+        Log("update_user_info: 요청키의 갯수가 올바르지 않습니다. count[%d]\n", key->count);
+        return (SRERR_INCORRECT_KEYCOUNT);
+    }
+
+    /* DB에서 사용자 정보를 가져온다 */
+    memset(&user, 0x00, sizeof(struct update_user_info));
+    EXEC SQL
+        SELECT NCODE, PHONE, EMAIL, NAME, PHOTO, LOGIN_PASSWD, CERT_PASSWD, USER_LEVEL, STATUS, ERROR_COUNT
+          INTO :user.ncode, :user.phone, :user.email, :user.name, :user.photo, :user.login_passwd, :user.cert_passwd, :user.user_level, :user.status, :user.error_count
+        FROM USER_INFO 
+        WHERE USER_KEY = :key->key[2];
+    
+    if ( _SQLNOTOK )
+    {
+        Log("update_user_info: 사용자 정보를 가져오는 도중 에러가 발생하였습니다 sqlcode[%d]\n", sqlca.sqlcode);
+        return (SRERR_SYSTEM_ERROR);
+    }
+    str_trim(user.ncode, TRIM_ALL);
+    str_trim(user.phone, TRIM_ALL);
+    str_trim(user.email, TRIM_ALL);
+    str_trim(user.name, TRIM_ALL);
+    str_trim(user.photo, TRIM_ALL);
+    str_trim(user.login_passwd, TRIM_ALL);
+    str_trim(user.cert_passwd, TRIM_ALL);
+
+    /* Redis에 올릴 값을 세팅한다 */
+    sprintf(redis_value, "{"
+                         "\"info\":{\"ncode\":\"%s\",\"phone\":\"%s\",\"email\":\"%s\",\"name\":\"%s\",\"photo\":\"%s\",\"passwd\":\"%s\",\"certps\":\"%s\",\"level\":\"%d\",\"status\":\"%c\",\"error\":\"%d\"}"
+                         "}",
+                         user.ncode, user.phone, user.email, user.name, user.photo, user.login_passwd, user.cert_passwd, user.user_level, user.status, user.error_count
+    );
+
+    /* Redis에 값을 올린다 */
+    for ( i = 0 ; i < redis->count ; i++ )
+    {
+        reply = redisCommand(redis->conn[i].c, "SET '%s:%s:%s' '%s'", key->key[0], key->key[1], key->key[2], redis_value);
+        if ( reply == NULL || reply->type == REDIS_REPLY_ERROR )
+        {
+            Log("update_user_info: Redis에 값을 올리는 중 에러가 발생하였습니다. host[%s:%d] err[%s]\n", redis->conn[i].host, redis->conn[i].port, reply->str);
+            freeReplyObject(reply);
+            return (SRERR_SYSTEM_ERROR);
+        } 
+        freeReplyObject(reply);
+    }
+	
+	return (SRERR_SUCCESS);
+}
