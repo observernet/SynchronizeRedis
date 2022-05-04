@@ -152,7 +152,7 @@ int ReceiveRequest(SOCKET sockfd)
     /* 나머지 데이타를 읽어온다 */
     if ( (length = atoi(rcvbuf)) > 0 )
     {
-        if ( (res = ReceiveTCP(sockfd, rcvbuf + sizeof(SRI_REQRES_HEADER), length, &timeover)) <= 0 )
+        if ( (res = ReceiveTCP(sockfd, rcvbuf + SRI_LENGTH_SIZE, length, &timeover)) <= 0 )
         {
             Log("ReceiveRequest: 데이타 수신에 실패하였습니다. sockfd[%d] errno[%d]\n", sockfd, errno);
             RemoveUser(sockfd);

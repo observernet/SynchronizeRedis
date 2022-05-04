@@ -32,6 +32,13 @@ struct update_user_info
     int         error_count;
 };
 
+struct update_user_wallet
+{
+    char        address[48];
+    char        name[64];
+    char        wallet_type;
+    char        cert_info[144];
+};
 
  /*************************************************************************************
  * 구현 시작..
@@ -39,11 +46,12 @@ struct update_user_info
 
 int	update_user_info(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, sql_context ctx)
 {
-    int i;
+    int i, ptr;
     char redis_value[MAX_BUFFER];
     redisReply *reply;
 
     struct update_user_info user;
+    struct update_user_wallet wallet;
 
     SetProgramName(pname);
 	mdb = p;
@@ -69,7 +77,7 @@ int	update_user_info(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, 
     
     if ( _SQLNOTOK )
     {
-        Log("update_user_info: 사용자 정보를 가져오는 도중 에러가 발생하였습니다 sqlcode[%d]\n", sqlca.sqlcode);
+        Log("update_user_info: 사용자 정보를 가져오는 도중 에러가 발생하였습니다 user_key[%s] sqlcode[%d]\n", key->key[2], sqlca.sqlcode);
         return (SRERR_SYSTEM_ERROR);
     }
     str_trim(user.ncode, TRIM_ALL);
@@ -80,17 +88,54 @@ int	update_user_info(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, 
     str_trim(user.login_passwd, TRIM_ALL);
     str_trim(user.cert_passwd, TRIM_ALL);
 
-    /* Redis에 올릴 값을 세팅한다 */
-    sprintf(redis_value, "{"
-                         "\"info\":{\"ncode\":\"%s\",\"phone\":\"%s\",\"email\":\"%s\",\"name\":\"%s\",\"photo\":\"%s\",\"passwd\":\"%s\",\"certps\":\"%s\",\"level\":\"%d\",\"status\":\"%c\",\"error\":\"%d\"}"
-                         "}",
-                         user.ncode, user.phone, user.email, user.name, user.photo, user.login_passwd, user.cert_passwd, user.user_level, user.status, user.error_count
-    );
+    /* Redis에 올릴 값을 세팅한다 (사용자정보) */
+    sprintf(redis_value, "\"info\":{\"ncode\":\"%s\",\"phone\":\"%s\",\"email\":\"%s\",\"name\":\"%s\",\"photo\":\"%s\",\"passwd\":\"%s\",\"certps\":\"%s\",\"level\":\"%d\",\"status\":\"%c\",\"error\":\"%d\"}",
+                         user.ncode, user.phone, user.email, user.name, user.photo, user.login_passwd, user.cert_passwd, user.user_level, user.status, user.error_count);
+
+    /* 해당 사용자의 지갑주소를 가져온다 */
+    EXEC SQL DECLARE _GET_USER_WALLET CURSOR FOR
+        SELECT ADDRESS, NAME, WALLET_TYPE, CERT_INFO
+        FROM WALLET_INFO
+        WHERE USER_KEY = :key->key[2];
+    
+    EXEC SQL OPEN _GET_USER_WALLET;
+	if ( _SQLOK )
+	{
+        /* Redis에 올릴 값을 세팅한다 (지갑정보) */
+        ptr = strlen(redis_value);
+        sprintf(&redis_value[ptr], ",\"wallet\":[");
+
+		while ( 1 )
+		{
+            memset(&wallet, 0x00, sizeof(struct update_user_wallet));
+			EXEC SQL FETCH _GET_USER_WALLET INTO :wallet.address, :wallet.name, :wallet.wallet_type, :wallet.cert_info;
+
+			if ( _SQLNOTFOUND ) break;
+            str_trim(wallet.address, TRIM_ALL);
+            str_trim(wallet.name, TRIM_ALL);
+            str_trim(wallet.cert_info, TRIM_ALL);
+			
+            /* Redis에 올릴 값을 세팅한다 (지갑정보) */
+            ptr = strlen(redis_value);
+            sprintf(&redis_value[ptr], "{\"address\":\"%s\",\"name\":\"%s\",\"type\":\"%c\",\"cert\":\"%s\"},", wallet.address, wallet.name, wallet.wallet_type, wallet.cert_info);
+		}
+
+        /* Redis에 올릴 값을 세팅한다 (지갑정보) */
+        ptr = strlen(redis_value) - 1;
+        sprintf(&redis_value[ptr], "]");
+	}
+	else
+	{
+		Log("update_user_info: 지갑 정보를 가져오는 도중 에러가 발생하였습니다 user_key[%s] sqlcode[%d]\n", key->key[2], sqlca.sqlcode);
+        return (SRERR_SYSTEM_ERROR);
+	}
+	EXEC SQL CLOSE _GET_USER_WALLET;
+
 
     /* Redis에 값을 올린다 */
     for ( i = 0 ; i < redis->count ; i++ )
     {
-        reply = redisCommand(redis->conn[i].c, "SET '%s:%s:%s' '%s'", key->key[0], key->key[1], key->key[2], redis_value);
+        reply = redisCommand(redis->conn[i].c, "SET '%s:%s:%s' '{%s}'", key->key[0], key->key[1], key->key[2], redis_value);
         if ( reply == NULL || reply->type == REDIS_REPLY_ERROR )
         {
             Log("update_user_info: Redis에 값을 올리는 중 에러가 발생하였습니다. host[%s:%d] err[%s]\n", redis->conn[i].host, redis->conn[i].port, reply->str);
