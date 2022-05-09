@@ -112,13 +112,13 @@ int main(int argc, char** argv)
     }
     if ( (length = atoi(rcvbuf)) > 0 )
     {
-        if ( ReceiveTCP(sockfd, rcvbuf + sizeof(SRI_REQRES_HEADER), length, 0) <= 0 )
+        if ( ReceiveTCP(sockfd, rcvbuf + SRI_LENGTH_SIZE, length, 0) <= 0 )
         {
             printf("응답 데이타 수신에 실패하였습니다. errno[%d]\n", errno);
             exit(EXIT_FAILURE);
         }
     }
-    printf("응답 데이타 전송 [%ld:%s]\n", strlen(sndbuf), sndbuf);
+    printf("응답 데이타 수신 [%ld:%s]\n", strlen(rcvbuf), rcvbuf);
 
     CloseSocket(sockfd);
     exit(EXIT_SUCCESS);

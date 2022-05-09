@@ -41,6 +41,7 @@ int   ProcessDeleteAll(char* buff);
 int   ParseKeys(char* buff, REDIS_KEYS** rkeys);
 
 int   SendResponse(int user_offset, SRI_REQRES_HEADER* reqHeader, int rcode);
+char *toLower(char *str);
 
 int   AcceptUser(SOCKET sockfd);
 int   RemoveUser(SOCKET sockfd);

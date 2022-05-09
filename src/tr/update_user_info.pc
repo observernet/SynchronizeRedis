@@ -18,7 +18,7 @@
 
 char program_name[64];
 
-struct update_user_info
+struct _update_user_info
 {
     char        ncode[8];
     char        phone[32];
@@ -32,7 +32,7 @@ struct update_user_info
     int         error_count;
 };
 
-struct update_user_wallet
+struct _update_user_wallet
 {
     char        address[48];
     char        name[64];
@@ -50,8 +50,9 @@ int	update_user_info(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, 
     char redis_value[MAX_BUFFER];
     redisReply *reply;
 
-    struct update_user_info user;
-    struct update_user_wallet wallet;
+    char user_key[32];
+    struct _update_user_info user;
+    struct _update_user_wallet wallet;
 
     SetProgramName(pname);
 	mdb = p;
@@ -60,24 +61,29 @@ int	update_user_info(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, 
 	struct sqlca sqlca;
 	EXEC SQL CONTEXT USE :ctx;
 
+
+    return 0;
+
+
     /* 키갯수를 체크한다 */
     if ( key->count != 3 )
     {
         Log("update_user_info: 요청키의 갯수가 올바르지 않습니다. count[%d]\n", key->count);
         return (SRERR_INCORRECT_KEYCOUNT);
     }
+    sprintf(user_key, "%s", key->key[2]);
 
     /* DB에서 사용자 정보를 가져온다 */
-    memset(&user, 0x00, sizeof(struct update_user_info));
+    memset(&user, 0x00, sizeof(struct _update_user_info));
     EXEC SQL
-        SELECT NCODE, PHONE, EMAIL, NAME, PHOTO, LOGIN_PASSWD, CERT_PASSWD, USER_LEVEL, STATUS, ERROR_COUNT
+        SELECT NCODE, PHONE, NVL(EMAIL, ' '), NVL(NAME, ' '), NVL(PHOTO, ' '), NVL(LOGIN_PASSWD, ' '), NVL(CERT_PASSWD, ' '), USER_LEVEL, STATUS, ERROR_COUNT
           INTO :user.ncode, :user.phone, :user.email, :user.name, :user.photo, :user.login_passwd, :user.cert_passwd, :user.user_level, :user.status, :user.error_count
         FROM USER_INFO 
-        WHERE USER_KEY = :key->key[2];
+        WHERE USER_KEY = :user_key;
     
     if ( _SQLNOTOK )
     {
-        Log("update_user_info: 사용자 정보를 가져오는 도중 에러가 발생하였습니다 user_key[%s] sqlcode[%d]\n", key->key[2], sqlca.sqlcode);
+        Log("update_user_info: 사용자 정보를 가져오는 도중 에러가 발생하였습니다 user_key[%s] sqlcode[%d]\n", user_key, sqlca.sqlcode);
         return (SRERR_SYSTEM_ERROR);
     }
     str_trim(user.ncode, TRIM_ALL);
@@ -94,9 +100,9 @@ int	update_user_info(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, 
 
     /* 해당 사용자의 지갑주소를 가져온다 */
     EXEC SQL DECLARE _GET_USER_WALLET CURSOR FOR
-        SELECT ADDRESS, NAME, WALLET_TYPE, CERT_INFO
+        SELECT ADDRESS, NVL(NAME, ' '), WALLET_TYPE, CERT_INFO
         FROM WALLET_INFO
-        WHERE USER_KEY = :key->key[2];
+        WHERE USER_KEY = :user_key;
     
     EXEC SQL OPEN _GET_USER_WALLET;
 	if ( _SQLOK )
@@ -107,7 +113,7 @@ int	update_user_info(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, 
 
 		while ( 1 )
 		{
-            memset(&wallet, 0x00, sizeof(struct update_user_wallet));
+            memset(&wallet, 0x00, sizeof(struct _update_user_wallet));
 			EXEC SQL FETCH _GET_USER_WALLET INTO :wallet.address, :wallet.name, :wallet.wallet_type, :wallet.cert_info;
 
 			if ( _SQLNOTFOUND ) break;
@@ -126,7 +132,7 @@ int	update_user_info(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, 
 	}
 	else
 	{
-		Log("update_user_info: 지갑 정보를 가져오는 도중 에러가 발생하였습니다 user_key[%s] sqlcode[%d]\n", key->key[2], sqlca.sqlcode);
+		Log("update_user_info: 지갑 정보를 가져오는 도중 에러가 발생하였습니다 user_key[%s] sqlcode[%d]\n", user_key, sqlca.sqlcode);
         return (SRERR_SYSTEM_ERROR);
 	}
 	EXEC SQL CLOSE _GET_USER_WALLET;
@@ -135,7 +141,7 @@ int	update_user_info(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, 
     /* Redis에 값을 올린다 */
     for ( i = 0 ; i < redis->count ; i++ )
     {
-        reply = redisCommand(redis->conn[i].c, "SET '%s:%s:%s' '{%s}'", key->key[0], key->key[1], key->key[2], redis_value);
+        reply = redisCommand(redis->conn[i].c, "SET %s:%s:%s {%s}", key->key[0], key->key[1], user_key, redis_value);
         if ( reply == NULL || reply->type == REDIS_REPLY_ERROR )
         {
             Log("update_user_info: Redis에 값을 올리는 중 에러가 발생하였습니다. host[%s:%d] err[%s]\n", redis->conn[i].host, redis->conn[i].port, reply->str);
