@@ -227,13 +227,13 @@ int ProcessUpdate(char* buff)
     {
         if ( keys[i].count < 2 ) continue;
         
-        char *key1, *key2;
+        char *key1;
 
         /* 처리함수명을 가져온다 */
-        key1 = toLower(keys[i].key[0]); key2 = toLower(keys[i].key[1]);
-        sprintf(func_name, "update_%s_%s", key1, key2);
-        free(key1); free(key2);
-
+        key1 = toLower(keys[i].key[1]);
+        sprintf(func_name, "update_%s", key1);
+        free(key1);
+        
         /* 처리함수 조회 */
         func = dlsym(handle, func_name);
         if ( dlerror() != NULL )
@@ -307,7 +307,7 @@ int ParseKeys(char* buff, REDIS_KEYS** rkeys)
             if ( kptr == -1 ) break;
             if ( strlen(ktoken) == 0 ) continue;
 
-            strcpy(key.key[key.count], ktoken);
+            sprintf(key.key[key.count], "%s", ktoken);
             key.count++;
 
             if ( key.count >= MAX_REDIS_KEY_COUNT ) break;

@@ -2,8 +2,8 @@ CSRC_HOME := $(shell if [ "$$CSRC_HOME" != "" ]; then echo $$CSRC_HOME; else ech
 include $(CSRC_HOME)/config.mk
 
 LIBS			=	
-TR_SYNC			=	update_user_info
-TR_SYNC_OBJS	=	update_user_info.o
+TR_SYNC			=	update_user_info update_version
+TR_SYNC_OBJS	=	update_user_info.o update_version.o
 
 LINK    =   -L$(ORACLE_HOME)/lib/ -lm -lz -lclntsh -lpthread -L$(LIB_PATH) -lSyncRedis -lhiredis -L$(SCLIB_PATH)/lib -lSC
 

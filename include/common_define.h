@@ -25,7 +25,7 @@ typedef struct
 typedef struct
 {
     int             count;
-    char            key[32][MAX_REDIS_KEY_COUNT];
+    char            key[MAX_REDIS_KEY_COUNT][32];
 } REDIS_KEYS;
 
 /*************************************************************************************

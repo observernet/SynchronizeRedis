@@ -1,0 +1,89 @@
+/*****************************************************
+ * 프로그램ID	: update_version.pc
+ * 프로그램명	: 사용자 정보를 읽어와 업데이트 한다
+ *****************************************************/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <errno.h>
+
+#include <ft_common.h>
+#include <ora_common.h>
+
+/*************************************************************************************
+ * Defines.....
+ *************************************************************************************/
+
+char program_name[64];
+
+struct _update_version
+{
+    char        android[64];
+    char        ios[64];
+    char        web[64];
+};
+
+ /*************************************************************************************
+ * 구현 시작..
+ *************************************************************************************/
+
+int	update_version(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, sql_context ctx)
+{
+    int i, ptr;
+    char redis_value[MAX_BUFFER];
+    redisReply *reply;
+
+    char version_key[64];
+    struct _update_version version;
+
+    SetProgramName(pname);
+	mdb = p;
+
+    /* 오라클사용 등록 */
+	struct sqlca sqlca;
+	EXEC SQL CONTEXT USE :ctx;
+
+    /* 키갯수를 체크한다 */
+    if ( key->count != 2 )
+    {
+        Log("update_version: 요청키의 갯수가 올바르지 않습니다. count[%d]\n", key->count);
+        return (SRERR_INCORRECT_KEYCOUNT);
+    }
+    sprintf(version_key, "%s", key->key[0]);
+
+    /* DB에서 버전 정보를 가져온다 */
+    memset(&version, 0x00, sizeof(struct _update_version));
+    EXEC SQL
+        SELECT ANDROID, IOS, WEB INTO :version.android, :version.ios, :version.web
+        FROM VERSION_INFO 
+        WHERE NAME = :version_key;
+    
+    if ( _SQLNOTOK )
+    {
+        Log("update_version: 버전 정보를 가져오는 도중 에러가 발생하였습니다 version_key[%s] sqlcode[%d]\n", version_key, sqlca.sqlcode);
+        return (SRERR_SYSTEM_ERROR);
+    }
+    str_trim(version.android, TRIM_ALL);
+    str_trim(version.ios, TRIM_ALL);
+    str_trim(version.web, TRIM_ALL);
+
+    /* Redis에 올릴 값을 세팅한다 (사용자정보) */
+    sprintf(redis_value, "{\"android\":\"%s\",\"ios\":\"%s\",\"web\":\"%s\"}", version.android, version.ios, version.web);
+
+    /* Redis에 값을 올린다 */
+    for ( i = 0 ; i < redis->count ; i++ )
+    {
+        reply = redisCommand(redis->conn[i].c, "SET %s:%s %s", key->key[0], key->key[1], redis_value);
+        if ( reply == NULL || reply->type == REDIS_REPLY_ERROR )
+        {
+            Log("update_version: Redis에 값을 올리는 중 에러가 발생하였습니다. host[%s:%d] err[%s]\n", redis->conn[i].host, redis->conn[i].port, reply->str);
+            freeReplyObject(reply);
+            return (SRERR_SYSTEM_ERROR);
+        } 
+        freeReplyObject(reply);
+    }
+	
+	return (SRERR_SUCCESS);
+}
