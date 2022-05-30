@@ -1,0 +1,123 @@
+/*****************************************************
+ * 프로그램ID	: update_banner.pc
+ * 프로그램명	: 배너 정보를 읽어와 업데이트 한다
+ *****************************************************/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <errno.h>
+
+#include <ft_common.h>
+#include <ora_common.h>
+
+/*************************************************************************************
+ * Defines.....
+ *************************************************************************************/
+
+#define _BANNER_OVERHEAD            16
+
+char program_name[64];
+
+struct _update_banner
+{
+    char        title[256];
+    char        image[128];
+    char        link[512];
+    char        lang;
+};
+
+ /*************************************************************************************
+ * 구현 시작..
+ *************************************************************************************/
+
+int	update_banner(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, sql_context ctx)
+{
+    int i, ptr, record_count = 0;
+    char *redis_value = NULL;
+    char record[MAX_BUFFER];
+    redisReply *reply;
+
+    char app_name[64];
+    struct _update_banner banner;
+
+    SetProgramName(pname);
+	mdb = p;
+
+    /* 오라클사용 등록 */
+	struct sqlca sqlca;
+	EXEC SQL CONTEXT USE :ctx;
+
+    /* 키갯수를 체크한다 */
+    if ( key->count != 2 )
+    {
+        Log("update_banner: 요청키의 갯수가 올바르지 않습니다. count[%d]\n", key->count);
+        return (SRERR_INCORRECT_KEYCOUNT);
+    }
+    sprintf(app_name, "%%%s%%", key->key[0]);
+
+    EXEC SQL DECLARE _GET_BANNER_LIST CURSOR FOR
+        SELECT TITLE, IMAGE, LINK, LANG
+        FROM MAIN_BANNER
+        WHERE APP_NAME like :app_name
+          and IS_USE = 'Y';
+    
+    EXEC SQL OPEN _GET_BANNER_LIST;
+	if ( _SQLOK )
+	{
+        /* Redis에 올릴 값을 세팅한다 */
+        redis_value = realloc(redis_value, _BANNER_OVERHEAD);
+        sprintf(redis_value, "[");
+
+		while ( 1 )
+		{
+            memset(&banner, 0x00, sizeof(struct _update_banner));
+			EXEC SQL FETCH _GET_BANNER_LIST INTO :banner.title, :banner.image, :banner.link, :banner.lang;
+
+			if ( _SQLNOTFOUND ) break;
+            str_trim(banner.title, TRIM_ALL);
+            str_trim(banner.image, TRIM_ALL);
+            str_trim(banner.link, TRIM_ALL);
+			
+            /* 레코드를 세팅한다 */
+            memset(record, 0x00, MAX_BUFFER);
+            sprintf(record, "{\"TITLE\":\"%s\",\"IMAGE\":\"%s\",\"LINK\":\"%s\",\"LANG\":\"%c\"}", banner.title, banner.image, banner.link, banner.lang);
+
+            /* Redis에 올릴 값을 세팅한다 */
+            ptr = strlen(redis_value);
+            redis_value = realloc(redis_value, ptr + strlen(record) + _BANNER_OVERHEAD);
+            sprintf(&redis_value[ptr], "%s,", record);
+
+            record_count++;
+		}
+
+        /* Redis에 올릴 값을 세팅한다 */
+        ptr = strlen(redis_value);
+        if ( record_count > 0 ) ptr = ptr - 1;
+        redis_value = realloc(redis_value, ptr + _BANNER_OVERHEAD);
+        sprintf(&redis_value[ptr], "]");
+	}
+	else
+	{
+		Log("update_banner: 배너 리스트를 가져오는 도중 에러가 발생하였습니다 app_name[%s] sqlcode[%d]\n", app_name, sqlca.sqlcode);
+        return (SRERR_SYSTEM_ERROR);
+	}
+	EXEC SQL CLOSE _GET_BANNER_LIST;
+
+    /* Redis에 값을 올린다 */
+    for ( i = 0 ; i < redis->count ; i++ )
+    {
+        reply = redisCommand(redis->conn[i].c, "SET %s:%s %s", key->key[0], key->key[1], redis_value);
+        if ( reply == NULL || reply->type == REDIS_REPLY_ERROR )
+        {
+            Log("update_banner: Redis에 값을 올리는 중 에러가 발생하였습니다. host[%s:%d] err[%s]\n", redis->conn[i].host, redis->conn[i].port, reply->str);
+            freeReplyObject(reply);
+            return (SRERR_SYSTEM_ERROR);
+        } 
+        freeReplyObject(reply);
+    }
+    if ( redis_value ) free(redis_value);
+	
+	return (SRERR_SUCCESS);
+}
