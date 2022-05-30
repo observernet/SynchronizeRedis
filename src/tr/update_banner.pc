@@ -58,7 +58,7 @@ int	update_banner(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, sql
     sprintf(app_name, "%%%s%%", key->key[0]);
 
     EXEC SQL DECLARE _GET_BANNER_LIST CURSOR FOR
-        SELECT TITLE, IMAGE, LINK, LANG
+        SELECT TITLE, NVL(IMAGE, ' '), NVL(LINK, ' '), LANG
         FROM MAIN_BANNER
         WHERE APP_NAME like :app_name
           and IS_USE = 'Y';
@@ -68,7 +68,7 @@ int	update_banner(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, sql
 	{
         /* Redis에 올릴 값을 세팅한다 */
         redis_value = realloc(redis_value, _BANNER_OVERHEAD);
-        sprintf(redis_value, "[");
+        sprintf(redis_value, "{\"list\":[");
 
 		while ( 1 )
 		{
@@ -96,7 +96,7 @@ int	update_banner(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, sql
         ptr = strlen(redis_value);
         if ( record_count > 0 ) ptr = ptr - 1;
         redis_value = realloc(redis_value, ptr + _BANNER_OVERHEAD);
-        sprintf(&redis_value[ptr], "]");
+        sprintf(&redis_value[ptr], "]}");
 	}
 	else
 	{
