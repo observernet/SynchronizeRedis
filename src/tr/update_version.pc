@@ -58,7 +58,7 @@ int	update_version(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, sq
     EXEC SQL
         SELECT ANDROID, IOS, WEB INTO :version.android, :version.ios, :version.web
         FROM VERSION_INFO 
-        WHERE NAME = :version_key;
+        WHERE APP_NAME = :version_key;
     
     if ( _SQLNOTOK )
     {

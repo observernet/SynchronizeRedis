@@ -50,7 +50,7 @@ int	update_adminvar(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, s
     EXEC SQL
         SELECT VARIABLE INTO :admin_var
         FROM CONFIG_VAR
-        WHERE NAME = :admin_key;
+        WHERE APP_NAME = :admin_key;
     
     if ( _SQLNOTOK )
     {
