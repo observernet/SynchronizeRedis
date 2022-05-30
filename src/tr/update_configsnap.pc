@@ -1,0 +1,103 @@
+/*****************************************************
+ * 프로그램ID	: update_configsnap.pc
+ * 프로그램명	: 스냅설정 정보를 읽어와 업데이트 한다
+ *****************************************************/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <errno.h>
+
+#include <ft_common.h>
+#include <ora_common.h>
+
+/*************************************************************************************
+ * Defines.....
+ *************************************************************************************/
+
+char program_name[64];
+
+struct _update_configsnap
+{
+    int         SNAP_INTERVAL;
+    int         SNAP_CHECK_TIME;
+    double      SNAP_CHECK_LANGE;
+    int         BASE_SNAP_LOAD_TIME;
+    int         MAX_LABEL_PER_SNAP;
+    int         MAX_LABEL_TIME_PER_SNAP;
+};
+
+ /*************************************************************************************
+ * 구현 시작..
+ *************************************************************************************/
+
+int	update_configsnap(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, sql_context ctx)
+{
+    int i, ptr;
+    char redis_value[MAX_BUFFER];
+    redisReply *reply;
+
+    //char version_key[64];
+    struct _update_configsnap csnap;
+
+    SetProgramName(pname);
+	mdb = p;
+
+    /* 오라클사용 등록 */
+	struct sqlca sqlca;
+	EXEC SQL CONTEXT USE :ctx;
+
+    /* 키갯수를 체크한다 */
+    //if ( key->count != 2 )
+    //{
+    //    Log("update_configsnap: 요청키의 갯수가 올바르지 않습니다. count[%d]\n", key->count);
+    //    return (SRERR_INCORRECT_KEYCOUNT);
+    //}
+    //sprintf(version_key, "%s", key->key[0]);
+
+    /* DB에서 버전 정보를 가져온다 */
+    memset(&csnap, 0x00, sizeof(struct _update_configsnap));
+    EXEC SQL
+        SELECT SNAP_INTERVAL, SNAP_CHECK_TIME, SNAP_CHECK_LANGE, BASE_SNAP_LOAD_TIME, MAX_LABEL_PER_SNAP, MAX_LABEL_TIME_PER_SNAP
+          INTO :csnap.SNAP_INTERVAL, :csnap.SNAP_CHECK_TIME, :csnap.SNAP_CHECK_LANGE, :csnap.BASE_SNAP_LOAD_TIME, :csnap.MAX_LABEL_PER_SNAP, :csnap.MAX_LABEL_TIME_PER_SNAP
+        FROM CONFIG_SNAP_LABEL;
+    
+    if ( _SQLNOTOK )
+    {
+        Log("update_configsnap: 버전 정보를 가져오는 도중 에러가 발생하였습니다 sqlcode[%d]\n", sqlca.sqlcode);
+        return (SRERR_SYSTEM_ERROR);
+    }
+
+    /* Redis에 올릴 값을 세팅한다 (사용자정보) */
+    sprintf(redis_value, "{"
+                         "\"SNAP_INTERVAL\":\"%d\","
+                         "\"SNAP_CHECK_TIME\":\"%d\","
+                         "\"SNAP_CHECK_LANGE\":\"%.5lf\","
+                         "\"BASE_SNAP_LOAD_TIME\":\"%d\","
+                         "\"MAX_LABEL_PER_SNAP\":\"%d\","
+                         "\"MAX_LABEL_TIME_PER_SNAP\":\"%d\""
+                         "}",
+                         csnap.SNAP_INTERVAL,
+                         csnap.SNAP_CHECK_TIME,
+                         csnap.SNAP_CHECK_LANGE,
+                         csnap.BASE_SNAP_LOAD_TIME,
+                         csnap.MAX_LABEL_PER_SNAP,
+                         csnap.MAX_LABEL_TIME_PER_SNAP
+    );
+
+    /* Redis에 값을 올린다 */
+    for ( i = 0 ; i < redis->count ; i++ )
+    {
+        reply = redisCommand(redis->conn[i].c, "SET %s:%s %s", key->key[0], key->key[1], redis_value);
+        if ( reply == NULL || reply->type == REDIS_REPLY_ERROR )
+        {
+            Log("update_configsnap: Redis에 값을 올리는 중 에러가 발생하였습니다. host[%s:%d] err[%s]\n", redis->conn[i].host, redis->conn[i].port, reply->str);
+            freeReplyObject(reply);
+            return (SRERR_SYSTEM_ERROR);
+        } 
+        freeReplyObject(reply);
+    }
+	
+	return (SRERR_SUCCESS);
+}

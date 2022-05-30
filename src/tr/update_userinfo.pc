@@ -1,0 +1,167 @@
+/*****************************************************
+ * 프로그램ID	: update_userinfo.pc
+ * 프로그램명	: 사용자 정보를 읽어와 업데이트 한다
+ *****************************************************/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <errno.h>
+
+#include <ft_common.h>
+#include <ora_common.h>
+
+/*************************************************************************************
+ * Defines.....
+ *************************************************************************************/
+
+char program_name[64];
+
+struct _update_userinfo
+{
+    char        USER_KEY[32];
+    char        NCODE[8];
+    char        PHONE[32];
+    char        EMAIL[256];
+    char        NAME[64];
+    char        PHOTO[128];
+    char        PROMOTION;
+    int         USER_LEVEL;
+    char        STATUS;
+    char        ABUSE_REASON[256];
+    int         LABEL_COUNT;
+    long        LAST_SNAP_TIME;
+};
+
+struct _update_userinfo_wallet
+{
+    char        ADDRESS[48];
+    char        NAME[64];
+    char        WALLET_TYPE;
+    char        CERT_INFO[144];
+};
+
+ /*************************************************************************************
+ * 구현 시작..
+ *************************************************************************************/
+
+int	update_userinfo(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, sql_context ctx)
+{
+    int i, ptr;
+    char redis_value[MAX_BUFFER];
+    redisReply *reply;
+
+    char user_key[32];
+    struct _update_userinfo user;
+    struct _update_userinfo_wallet wallet;
+
+    SetProgramName(pname);
+	mdb = p;
+
+    /* 오라클사용 등록 */
+	struct sqlca sqlca;
+	EXEC SQL CONTEXT USE :ctx;
+
+    /* 키갯수를 체크한다 */
+    if ( key->count != 3 )
+    {
+        Log("update_userinfo: 요청키의 갯수가 올바르지 않습니다. count[%d]\n", key->count);
+        return (SRERR_INCORRECT_KEYCOUNT);
+    }
+    sprintf(user_key, "%s", key->key[2]);
+
+    /* DB에서 사용자 정보를 가져온다 */
+    memset(&user, 0x00, sizeof(struct _update_userinfo));
+    EXEC SQL
+        SELECT USER_KEY, NCODE, PHONE, NVL(EMAIL, ' '), NVL(NAME, ' '), NVL(PHOTO, ' '), PROMOTION, USER_LEVEL, STATUS, NVL(ABUSE_REASON, ' '), LABEL_COUNT, LAST_SNAP_TIME
+          INTO :user.USER_KEY, :user.NCODE, :user.PHONE, :user.EMAIL, :user.NAME, :user.PHOTO, :user.PROMOTION, :user.USER_LEVEL, :user.STATUS, :user.ABUSE_REASON, :user.LABEL_COUNT, :user.LAST_SNAP_TIME
+        FROM USER_INFO 
+        WHERE USER_KEY = :user_key;
+    
+    if ( _SQLNOTOK )
+    {
+        Log("update_userinfo: 사용자 정보를 가져오는 도중 에러가 발생하였습니다 user_key[%s] sqlcode[%d]\n", user_key, sqlca.sqlcode);
+        return (SRERR_SYSTEM_ERROR);
+    }
+    str_trim(user.USER_KEY, TRIM_ALL);
+    str_trim(user.NCODE, TRIM_ALL);
+    str_trim(user.PHONE, TRIM_ALL);
+    str_trim(user.EMAIL, TRIM_ALL);
+    str_trim(user.NAME, TRIM_ALL);
+    str_trim(user.PHOTO, TRIM_ALL);
+    str_trim(user.ABUSE_REASON, TRIM_ALL);
+
+    /* Redis에 올릴 값을 세팅한다 (사용자정보) */
+    sprintf(redis_value, "\"info\":{"
+                         "\"USER_KEY\":\"%s\","
+                         "\"NCODE\":\"%s\","
+                         "\"PHONE\":\"%s\","
+                         "\"EMAIL\":\"%s\","
+                         "\"NAME\":\"%s\","
+                         "\"PHOTO\":\"%s\","
+                         "\"PROMOTION\":\"%c\","
+                         "\"USER_LEVEL\":\"%d\","
+                         "\"STATUS\":\"%c\","
+                         "\"ABUSE_REASON\":\"%s\""
+                         "\"LABEL_COUNT\":\"%d\""
+                         "\"LAST_SNAP_TIME\":\"%ld\""
+                         "}",
+                         user.USER_KEY, user.NCODE, user.PHONE, user.EMAIL, user.NAME, user.PHOTO, user.PROMOTION, user.USER_LEVEL, user.STATUS, user.ABUSE_REASON, user.LABEL_COUNT, user.LAST_SNAP_TIME
+    );
+
+    /* 해당 사용자의 지갑주소를 가져온다 */
+    EXEC SQL DECLARE _GET_USER_WALLET CURSOR FOR
+        SELECT ADDRESS, NVL(NAME, ' '), WALLET_TYPE, CERT_INFO
+        FROM WALLET_INFO
+        WHERE USER_KEY = :user_key;
+    
+    EXEC SQL OPEN _GET_USER_WALLET;
+	if ( _SQLOK )
+	{
+        /* Redis에 올릴 값을 세팅한다 (지갑정보) */
+        ptr = strlen(redis_value);
+        sprintf(&redis_value[ptr], ",\"wallet\":[");
+
+		while ( 1 )
+		{
+            memset(&wallet, 0x00, sizeof(struct _update_userinfo_wallet));
+			EXEC SQL FETCH _GET_USER_WALLET INTO :wallet.ADDRESS, :wallet.NAME, :wallet.WALLET_TYPE, :wallet.CERT_INFO;
+
+			if ( _SQLNOTFOUND ) break;
+            str_trim(wallet.ADDRESS, TRIM_ALL);
+            str_trim(wallet.NAME, TRIM_ALL);
+            str_trim(wallet.CERT_INFO, TRIM_ALL);
+			
+            /* Redis에 올릴 값을 세팅한다 (지갑정보) */
+            ptr = strlen(redis_value);
+            sprintf(&redis_value[ptr], "{\"ADDRESS\":\"%s\",\"NAME\":\"%s\",\"WALLET_TYPE\":\"%c\",\"CERT_INFO\":\"%s\"},", wallet.ADDRESS, wallet.NAME, wallet.WALLET_TYPE, wallet.CERT_INFO);
+		}
+
+        /* Redis에 올릴 값을 세팅한다 (지갑정보) */
+        ptr = strlen(redis_value) - 1;
+        sprintf(&redis_value[ptr], "]");
+	}
+	else
+	{
+		Log("update_user_info: 지갑 정보를 가져오는 도중 에러가 발생하였습니다 user_key[%s] sqlcode[%d]\n", user_key, sqlca.sqlcode);
+        return (SRERR_SYSTEM_ERROR);
+	}
+	EXEC SQL CLOSE _GET_USER_WALLET;
+
+
+    /* Redis에 값을 올린다 */
+    for ( i = 0 ; i < redis->count ; i++ )
+    {
+        reply = redisCommand(redis->conn[i].c, "SET %s:%s:%s {%s}", key->key[0], key->key[1], user_key, redis_value);
+        if ( reply == NULL || reply->type == REDIS_REPLY_ERROR )
+        {
+            Log("update_user_info: Redis에 값을 올리는 중 에러가 발생하였습니다. host[%s:%d] err[%s]\n", redis->conn[i].host, redis->conn[i].port, reply->str);
+            freeReplyObject(reply);
+            return (SRERR_SYSTEM_ERROR);
+        } 
+        freeReplyObject(reply);
+    }
+	
+	return (SRERR_SUCCESS);
+}

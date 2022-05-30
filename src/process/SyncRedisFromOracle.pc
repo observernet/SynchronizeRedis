@@ -291,18 +291,20 @@ int ParseKeys(char* buff, REDIS_KEYS** rkeys)
 
     /* 데이타를 파싱한다 */
     key_count = 0; keys = NULL;
-    dptr = 0; dtoken[0] = 0;
+    dptr = 0;
     while ( 1 )
     {
+        memset(dtoken, 0x00, 256);
         dptr = get_next_token(buff, dptr, dtoken, SRI_DATA_SEPERATOR);
         if ( dptr == -1 ) break;
         if ( strlen(dtoken) == 0 ) continue;
 
         /* 데이타의 세부키를 파싱한다 */
-        kptr = 0; ktoken[0] = 0;
+        kptr = 0;
         memset(&key, 0x00, sizeof(REDIS_KEYS));
         while ( 1 )
         {
+            memset(ktoken, 0x00, 64);
             kptr = get_next_token(dtoken, kptr, ktoken, ':');
             if ( kptr == -1 ) break;
             if ( strlen(ktoken) == 0 ) continue;
