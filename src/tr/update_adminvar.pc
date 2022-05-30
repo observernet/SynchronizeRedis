@@ -1,0 +1,79 @@
+/*****************************************************
+ * 프로그램ID	: update_configsnap.pc
+ * 프로그램명	: 스냅설정 정보를 읽어와 업데이트 한다
+ *****************************************************/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <errno.h>
+
+#include <ft_common.h>
+#include <ora_common.h>
+
+/*************************************************************************************
+ * Defines.....
+ *************************************************************************************/
+
+char program_name[64];
+
+ /*************************************************************************************
+ * 구현 시작..
+ *************************************************************************************/
+
+int	update_adminvar(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, sql_context ctx)
+{
+    int i;
+    char redis_value[MAX_BUFFER];
+    redisReply *reply;
+
+    char admin_key[64], admin_var[4096];
+
+    SetProgramName(pname);
+	mdb = p;
+
+    /* 오라클사용 등록 */
+	struct sqlca sqlca;
+	EXEC SQL CONTEXT USE :ctx;
+
+    /* 키갯수를 체크한다 */
+    if ( key->count != 2 )
+    {
+        Log("update_adminvar: 요청키의 갯수가 올바르지 않습니다. count[%d]\n", key->count);
+        return (SRERR_INCORRECT_KEYCOUNT);
+    }
+    sprintf(admin_key, "%s", key->key[0]);
+
+    /* DB에서 버전 정보를 가져온다 */
+    memset(admin_var, 0x00, 4096);
+    EXEC SQL
+        SELECT VARIABLE INTO :admin_var
+        FROM CONFIG_VAR
+        WHERE NAME = :admin_key;
+    
+    if ( _SQLNOTOK )
+    {
+        Log("update_adminvar: 설정 정보를 가져오는 도중 에러가 발생하였습니다 sqlcode[%d]\n", sqlca.sqlcode);
+        return (SRERR_SYSTEM_ERROR);
+    }
+    str_trim(admin_var, TRIM_ALL);
+
+    /* Redis에 올릴 값을 세팅한다 */
+    sprintf(redis_value, "%s", admin_var);
+
+    /* Redis에 값을 올린다 */
+    for ( i = 0 ; i < redis->count ; i++ )
+    {
+        reply = redisCommand(redis->conn[i].c, "SET %s:%s %s", key->key[0], key->key[1], redis_value);
+        if ( reply == NULL || reply->type == REDIS_REPLY_ERROR )
+        {
+            Log("update_adminvar: Redis에 값을 올리는 중 에러가 발생하였습니다. host[%s:%d] err[%s]\n", redis->conn[i].host, redis->conn[i].port, reply->str);
+            freeReplyObject(reply);
+            return (SRERR_SYSTEM_ERROR);
+        } 
+        freeReplyObject(reply);
+    }
+	
+	return (SRERR_SUCCESS);
+}
