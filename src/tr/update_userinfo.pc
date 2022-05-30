@@ -101,11 +101,11 @@ int	update_userinfo(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, s
                          "\"NAME\":\"%s\","
                          "\"PHOTO\":\"%s\","
                          "\"PROMOTION\":\"%c\","
-                         "\"USER_LEVEL\":\"%d\","
+                         "\"USER_LEVEL\":%d,"
                          "\"STATUS\":\"%c\","
-                         "\"ABUSE_REASON\":\"%s\""
-                         "\"LABEL_COUNT\":\"%d\""
-                         "\"LAST_SNAP_TIME\":\"%ld\""
+                         "\"ABUSE_REASON\":\"%s\","
+                         "\"LABEL_COUNT\":%d,"
+                         "\"LAST_SNAP_TIME\":%ld"
                          "}",
                          user.USER_KEY, user.NCODE, user.PHONE, user.EMAIL, user.NAME, user.PHOTO, user.PROMOTION, user.USER_LEVEL, user.STATUS, user.ABUSE_REASON, user.LABEL_COUNT, user.LAST_SNAP_TIME
     );
