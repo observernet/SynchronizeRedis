@@ -18,17 +18,26 @@
 
 char program_name[64];
 
+struct _update_adminvar_reword
+{
+    double      snap;
+    double      label;
+    double      label_etc;
+    double      obsp_per_day;
+};
+
  /*************************************************************************************
  * 구현 시작..
  *************************************************************************************/
 
 int	update_adminvar(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, sql_context ctx)
 {
-    int i;
+    int i, ptr;
     char redis_value[MAX_BUFFER];
     redisReply *reply;
 
     char admin_key[64], admin_var[4096];
+    struct _update_adminvar_reword reword;
 
     SetProgramName(pname);
 	mdb = p;
@@ -45,7 +54,7 @@ int	update_adminvar(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, s
     }
     sprintf(admin_key, "%s", key->key[0]);
 
-    /* DB에서 버전 정보를 가져온다 */
+    /* DB에서 설정 정보를 가져온다 */
     memset(admin_var, 0x00, 4096);
     EXEC SQL
         SELECT VARIABLE INTO :admin_var
@@ -59,8 +68,24 @@ int	update_adminvar(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, s
     }
     str_trim(admin_var, TRIM_ALL);
 
+    /* 추가로 보상관련 정보도 가져온다 */
+    memset(&reword, 0x00, sizeof(struct _update_adminvar_reword));
+    EXEC SQL
+        SELECT SNAP, LABEL, LABEL_ETC, OBSP_PER_DAY INTO :reword.snap, :reword.label, :reword.label_etc, :reword.obsp_per_day
+        FROM CONFIG_REWORD
+        WHERE APP_NAME = :admin_key;
+    
+    if ( _SQLNOTOK )
+    {
+        Log("update_adminvar: 보상 정보를 가져오는 도중 에러가 발생하였습니다 sqlcode[%d]\n", sqlca.sqlcode);
+        return (SRERR_SYSTEM_ERROR);
+    }
+
     /* Redis에 올릴 값을 세팅한다 */
     sprintf(redis_value, "%s", admin_var);
+    ptr = strlen(redis_value) - 1;
+    sprintf(&redis_value[ptr], ", \"reword\": {\"snap\": %.2lf, \"label\": %.2lf, \"label_etc\": %.2lf, \"obsp_per_day\": %.2lf}}",
+                               reword.snap, reword.label, reword.label_etc, reword.obsp_per_day);
 
     /* Redis에 값을 올린다 */
     for ( i = 0 ; i < redis->count ; i++ )
