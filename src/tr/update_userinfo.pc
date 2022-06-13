@@ -18,7 +18,7 @@
 
 char program_name[64];
 
-struct _update_userinfo
+struct _update_userinfo_info
 {
     char        USER_KEY[32];
     char        NCODE[8];
@@ -30,8 +30,6 @@ struct _update_userinfo
     int         USER_LEVEL;
     char        STATUS;
     char        ABUSE_REASON[256];
-    int         LABEL_COUNT;
-    long        LAST_SNAP_TIME;
 };
 
 struct _update_userinfo_wallet
@@ -42,46 +40,85 @@ struct _update_userinfo_wallet
     char        CERT_INFO[144];
 };
 
+struct _update_userinfo_stat
+{
+    long        LAST_SNAP_TIME;
+    int         LABEL_COUNT;
+    int         TODAY_SNAP_COUNT;
+    int         TODAY_LABEL_COUNT;
+    int         TODAY_LABEL_ETC_COUNT;
+};
+
  /*************************************************************************************
  * 구현 시작..
  *************************************************************************************/
 
 int	update_userinfo(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, sql_context ctx)
 {
-    int i, ptr;
+    int i, res;
     char redis_value[MAX_BUFFER];
     redisReply *reply;
 
-    char user_key[32];
-    struct _update_userinfo user;
-    struct _update_userinfo_wallet wallet;
+    char user_key[32], hash_key[32];
 
     SetProgramName(pname);
 	mdb = p;
 
-    /* 오라클사용 등록 */
-	struct sqlca sqlca;
-	EXEC SQL CONTEXT USE :ctx;
-
     /* 키갯수를 체크한다 */
-    if ( key->count != 3 )
+    if ( key->count != 4 )
     {
         Log("update_userinfo: 요청키의 갯수가 올바르지 않습니다. count[%d]\n", key->count);
         return (SRERR_INCORRECT_KEYCOUNT);
     }
     sprintf(user_key, "%s", key->key[2]);
+    sprintf(hash_key, "%s", key->key[3]);
+
+    /* 레디스에 올린 값을 가져온다 */
+    if ( strcasecmp(hash_key, "info") == 0 ) res = _update_userinfo_info(redis_value, user_key, ctx);
+    else if ( strcasecmp(hash_key, "wallet") == 0 ) res = _update_userinfo_wallet(redis_value, user_key, ctx);
+    else if ( strcasecmp(hash_key, "stat") == 0 ) res = _update_userinfo_stat(redis_value, user_key, ctx);
+    else
+    {
+        Log("update_userinfo: 올바르지 않은 래시키입니다 [%s]\n", hash_key);
+        return (SRERR_INCORRECT_HASHKEY);
+    }
+    if ( res != 0 ) return (res);
+
+    /* Redis에 값을 올린다 */
+    for ( i = 0 ; i < redis->count ; i++ )
+    {
+        reply = redisCommand(redis->conn[i].c, "HSET %s:%s:%s %s %s", key->key[0], key->key[1], user_key, hash_key, redis_value);
+        if ( reply == NULL || reply->type == REDIS_REPLY_ERROR )
+        {
+            Log("update_user_info: Redis에 값을 올리는 중 에러가 발생하였습니다. host[%s:%d] err[%s]\n", redis->conn[i].host, redis->conn[i].port, reply->str);
+            freeReplyObject(reply);
+            return (SRERR_SYSTEM_ERROR);
+        } 
+        freeReplyObject(reply);
+    }
+	
+	return (SRERR_SUCCESS);
+}
+
+int _update_userinfo_info(char* redis_value, char* user_key, sql_context ctx)
+{
+    struct _update_userinfo_info user;
+
+    /* 오라클사용 등록 */
+	struct sqlca sqlca;
+	EXEC SQL CONTEXT USE :ctx;
 
     /* DB에서 사용자 정보를 가져온다 */
-    memset(&user, 0x00, sizeof(struct _update_userinfo));
+    memset(&user, 0x00, sizeof(struct _update_userinfo_info));
     EXEC SQL
-        SELECT USER_KEY, NCODE, PHONE, NVL(EMAIL, ' '), NVL(NAME, ' '), NVL(PHOTO, ' '), PROMOTION, USER_LEVEL, STATUS, NVL(ABUSE_REASON, ' '), LABEL_COUNT, LAST_SNAP_TIME
-          INTO :user.USER_KEY, :user.NCODE, :user.PHONE, :user.EMAIL, :user.NAME, :user.PHOTO, :user.PROMOTION, :user.USER_LEVEL, :user.STATUS, :user.ABUSE_REASON, :user.LABEL_COUNT, :user.LAST_SNAP_TIME
+        SELECT USER_KEY, NCODE, PHONE, NVL(EMAIL, ' '), NVL(NAME, ' '), NVL(PHOTO, ' '), PROMOTION, USER_LEVEL, STATUS, NVL(ABUSE_REASON, ' ')
+          INTO :user.USER_KEY, :user.NCODE, :user.PHONE, :user.EMAIL, :user.NAME, :user.PHOTO, :user.PROMOTION, :user.USER_LEVEL, :user.STATUS, :user.ABUSE_REASON
         FROM USER_INFO 
         WHERE USER_KEY = :user_key;
     
     if ( _SQLNOTOK )
     {
-        Log("update_userinfo: 사용자 정보를 가져오는 도중 에러가 발생하였습니다 user_key[%s] sqlcode[%d]\n", user_key, sqlca.sqlcode);
+        Log("_update_userinfo_info: 사용자 정보를 가져오는 도중 에러가 발생하였습니다 user_key[%s] sqlcode[%d]\n", user_key, sqlca.sqlcode);
         return (SRERR_SYSTEM_ERROR);
     }
     str_trim(user.USER_KEY, TRIM_ALL);
@@ -93,7 +130,7 @@ int	update_userinfo(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, s
     str_trim(user.ABUSE_REASON, TRIM_ALL);
 
     /* Redis에 올릴 값을 세팅한다 (사용자정보) */
-    sprintf(redis_value, "\"info\":{"
+    sprintf(redis_value, "{"
                          "\"USER_KEY\":\"%s\","
                          "\"NCODE\":\"%s\","
                          "\"PHONE\":\"%s\","
@@ -103,12 +140,22 @@ int	update_userinfo(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, s
                          "\"PROMOTION\":\"%c\","
                          "\"USER_LEVEL\":%d,"
                          "\"STATUS\":\"%c\","
-                         "\"ABUSE_REASON\":\"%s\","
-                         "\"LABEL_COUNT\":%d,"
-                         "\"LAST_SNAP_TIME\":%ld"
+                         "\"ABUSE_REASON\":\"%s\""
                          "}",
-                         user.USER_KEY, user.NCODE, user.PHONE, user.EMAIL, user.NAME, user.PHOTO, user.PROMOTION, user.USER_LEVEL, user.STATUS, user.ABUSE_REASON, user.LABEL_COUNT, user.LAST_SNAP_TIME
+                         user.USER_KEY, user.NCODE, user.PHONE, user.EMAIL, user.NAME, user.PHOTO, user.PROMOTION, user.USER_LEVEL, user.STATUS, user.ABUSE_REASON
     );
+
+    return (0);
+}
+
+int _update_userinfo_wallet(char* redis_value, char* user_key, sql_context ctx)
+{
+    int ptr;
+    struct _update_userinfo_wallet wallet;
+
+    /* 오라클사용 등록 */
+	struct sqlca sqlca;
+	EXEC SQL CONTEXT USE :ctx;
 
     /* 해당 사용자의 지갑주소를 가져온다 */
     EXEC SQL DECLARE _GET_USER_WALLET CURSOR FOR
@@ -120,8 +167,8 @@ int	update_userinfo(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, s
 	if ( _SQLOK )
 	{
         /* Redis에 올릴 값을 세팅한다 (지갑정보) */
-        ptr = strlen(redis_value);
-        sprintf(&redis_value[ptr], ",\"wallet\":[");
+        ptr = 0;
+        sprintf(redis_value, "[");
 
 		while ( 1 )
 		{
@@ -144,24 +191,91 @@ int	update_userinfo(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, s
 	}
 	else
 	{
-		Log("update_user_info: 지갑 정보를 가져오는 도중 에러가 발생하였습니다 user_key[%s] sqlcode[%d]\n", user_key, sqlca.sqlcode);
+		Log("_update_userinfo_wallet: 지갑 정보를 가져오는 도중 에러가 발생하였습니다 user_key[%s] sqlcode[%d]\n", user_key, sqlca.sqlcode);
         return (SRERR_SYSTEM_ERROR);
 	}
 	EXEC SQL CLOSE _GET_USER_WALLET;
 
+    return (0);
+}
 
-    /* Redis에 값을 올린다 */
-    for ( i = 0 ; i < redis->count ; i++ )
+int _update_userinfo_stat(char* redis_value, char* user_key, sql_context ctx)
+{
+    int today = intDate();
+    struct _update_userinfo_stat stat;
+
+    /* 오라클사용 등록 */
+	struct sqlca sqlca;
+	EXEC SQL CONTEXT USE :ctx;
+
+    /* 마지막 스냅시간과 라벨갯수를 가져온다 */
+    memset(&stat, 0x00, sizeof(struct _update_userinfo_stat));
+    EXEC SQL
+        SELECT LABEL_COUNT, LAST_SNAP_TIME INTO :stat.LABEL_COUNT, :stat.LAST_SNAP_TIME
+        FROM USER_INFO 
+        WHERE USER_KEY = :user_key;
+    
+    if ( _SQLNOTOK )
     {
-        reply = redisCommand(redis->conn[i].c, "SET %s:%s:%s {%s}", key->key[0], key->key[1], user_key, redis_value);
-        if ( reply == NULL || reply->type == REDIS_REPLY_ERROR )
-        {
-            Log("update_user_info: Redis에 값을 올리는 중 에러가 발생하였습니다. host[%s:%d] err[%s]\n", redis->conn[i].host, redis->conn[i].port, reply->str);
-            freeReplyObject(reply);
-            return (SRERR_SYSTEM_ERROR);
-        } 
-        freeReplyObject(reply);
+        Log("_update_userinfo_stat: 사용자 정보를 가져오는 도중 에러가 발생하였습니다 user_key[%s] sqlcode[%d]\n", user_key, sqlca.sqlcode);
+        return (SRERR_SYSTEM_ERROR);
     }
-	
-	return (SRERR_SUCCESS);
+
+    /* 당일 SNAP 카운트를 가져온다 */
+    EXEC SQL 
+        SELECT count(SNAP_IDX) INTO :stat.TODAY_SNAP_COUNT
+        FROM SNAP 
+        WHERE SNAP_DATE = :today
+          and USER_KEY = :user_key
+          and UPLOAD_STATUS = 'V';
+    
+    if ( _SQLNOTOK )
+    {
+        Log("_update_userinfo_stat: SNAP 정보를 가져오는 도중 에러가 발생하였습니다 user_key[%s] sqlcode[%d]\n", user_key, sqlca.sqlcode);
+        return (SRERR_SYSTEM_ERROR);
+    }
+
+    /* 당일 라벨 카운트를 가져온다 */
+    EXEC SQL DECLARE _GET_USER_LABEL CURSOR FOR
+        SELECT IS_ETC, count(LABEL_IDX)
+        FROM SNAP_LABEL
+        WHERE USER_KEY = :user_key
+          and TO_CHAR(LABEL_TIME, 'RRRRMMDD') = :today
+        GROUP BY IS_ETC;
+    
+    EXEC SQL OPEN _GET_USER_LABEL;
+	if ( _SQLOK )
+	{
+        char is_etc;
+        int label_count;
+
+		while ( 1 )
+		{
+			EXEC SQL FETCH _GET_USER_LABEL INTO :is_etc, :label_count;
+
+			if ( _SQLNOTFOUND ) break;
+     
+            stat.TODAY_LABEL_COUNT += label_count;
+            if ( is_etc == 'Y' ) stat.TODAY_LABEL_ETC_COUNT += label_count;
+		}
+	}
+	else
+	{
+		Log("_update_userinfo_stat: 라벨 정보를 가져오는 도중 에러가 발생하였습니다 user_key[%s] sqlcode[%d]\n", user_key, sqlca.sqlcode);
+        return (SRERR_SYSTEM_ERROR);
+	}
+	EXEC SQL CLOSE _GET_USER_LABEL;
+
+    /* Redis에 올릴 값을 세팅한다 (사용자정보) */
+    sprintf(redis_value, "{"
+                         "\"LABEL_COUNT\":%d,"
+                         "\"LAST_SNAP_TIME\":%ld,"
+                         "\"TODAY_SNAP_COUNT\":%d,"
+                         "\"TODAY_LABEL_COUNT\":%d,"
+                         "\"TODAY_LABEL_ETC_COUNT\":%d"
+                         "}",
+                         stat.LABEL_COUNT, stat.LAST_SNAP_TIME, stat.TODAY_SNAP_COUNT, stat.TODAY_LABEL_COUNT, stat.TODAY_LABEL_ETC_COUNT
+    );
+
+    return (0);
 }

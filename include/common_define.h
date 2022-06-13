@@ -37,6 +37,7 @@ typedef struct
 #define SRERR_UNDEFINED_TRID        1
 #define SRERR_NOTFOUND_KEY          2
 #define SRERR_INCORRECT_KEYCOUNT    3
+#define SRERR_INCORRECT_HASHKEY     4
 
 #define SRERR_SYSTEM_ERROR          9999
 
