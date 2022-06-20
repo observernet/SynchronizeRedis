@@ -24,6 +24,7 @@ struct _update_adminvar_reword
     double      label;
     double      label_etc;
     double      obsp_per_day;
+    double      auto_exchange;
 };
 
  /*************************************************************************************
@@ -71,7 +72,7 @@ int	update_adminvar(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, s
     /* 추가로 보상관련 정보도 가져온다 */
     memset(&reword, 0x00, sizeof(struct _update_adminvar_reword));
     EXEC SQL
-        SELECT SNAP, LABEL, LABEL_ETC, OBSP_PER_DAY INTO :reword.snap, :reword.label, :reword.label_etc, :reword.obsp_per_day
+        SELECT SNAP, LABEL, LABEL_ETC, OBSP_PER_DAY, AUTO_EXCHANGE INTO :reword.snap, :reword.label, :reword.label_etc, :reword.obsp_per_day, :reword.auto_exchange
         FROM CONFIG_REWORD
         WHERE APP_NAME = :admin_key;
     
@@ -84,8 +85,8 @@ int	update_adminvar(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, s
     /* Redis에 올릴 값을 세팅한다 */
     sprintf(redis_value, "%s", admin_var);
     ptr = strlen(redis_value) - 1;
-    sprintf(&redis_value[ptr], ", \"reword\": {\"snap\": %.2lf, \"label\": %.2lf, \"label_etc\": %.2lf, \"obsp_per_day\": %.2lf}}",
-                               reword.snap, reword.label, reword.label_etc, reword.obsp_per_day);
+    sprintf(&redis_value[ptr], ", \"reword\": {\"snap\": %.2lf, \"label\": %.2lf, \"label_etc\": %.2lf, \"obsp_per_day\": %.2lf, \"auto_exchange\": %.2lf}}",
+                               reword.snap, reword.label, reword.label_etc, reword.obsp_per_day, reword.auto_exchange);
 
     /* Redis에 값을 올린다 */
     for ( i = 0 ; i < redis->count ; i++ )
