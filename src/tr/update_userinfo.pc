@@ -42,6 +42,7 @@ struct _update_userinfo_wallet
 
 struct _update_userinfo_stat
 {
+    double      OBSP;
     long        LAST_SNAP_TIME;
     int         LABEL_COUNT;
     int         TODAY_SNAP_COUNT;
@@ -208,8 +209,23 @@ int _update_userinfo_stat(char* redis_value, char* user_key, sql_context ctx)
 	struct sqlca sqlca;
 	EXEC SQL CONTEXT USE :ctx;
 
-    /* 마지막 스냅시간과 라벨갯수를 가져온다 */
+    /* OBSP를 가져온다 */
     memset(&stat, 0x00, sizeof(struct _update_userinfo_stat));
+    EXEC SQL
+        SELECT SUM(A.REWORD_AMOUNT - NVL(A.EXCHANGE_AMOUNT, 0)) INTO :stat.OBSP
+        FROM REWORD_DETAIL A, REWORD_LIST B
+        WHERE A.REWORD_IDX = B.REWORD_IDX
+          and A.USER_KEY = :user_key
+          and A.EXCHANGE_STATUS in ('N', 'P')
+          and B.PROC_STATUS = 'V';
+
+    if ( _SQLNOTOK )
+    {
+        Log("_update_userinfo_stat: OBSP를 가져오는 도중 에러가 발생하였습니다 user_key[%s] sqlcode[%d]\n", user_key, sqlca.sqlcode);
+        return (SRERR_SYSTEM_ERROR);
+    }
+
+    /* 마지막 스냅시간과 라벨갯수를 가져온다 */
     EXEC SQL
         SELECT LABEL_COUNT, LAST_SNAP_TIME INTO :stat.LABEL_COUNT, :stat.LAST_SNAP_TIME
         FROM USER_INFO 
@@ -268,13 +284,14 @@ int _update_userinfo_stat(char* redis_value, char* user_key, sql_context ctx)
 
     /* Redis에 올릴 값을 세팅한다 (사용자정보) */
     sprintf(redis_value, "{"
+                         "\"OBSP\":%.2lf,"
                          "\"LABEL_COUNT\":%d,"
                          "\"LAST_SNAP_TIME\":%ld,"
                          "\"TODAY_SNAP_COUNT\":%d,"
                          "\"TODAY_LABEL_COUNT\":%d,"
                          "\"TODAY_LABEL_ETC_COUNT\":%d"
                          "}",
-                         stat.LABEL_COUNT, stat.LAST_SNAP_TIME, stat.TODAY_SNAP_COUNT, stat.TODAY_LABEL_COUNT, stat.TODAY_LABEL_ETC_COUNT
+                         stat.OBSP, stat.LABEL_COUNT, stat.LAST_SNAP_TIME, stat.TODAY_SNAP_COUNT, stat.TODAY_LABEL_COUNT, stat.TODAY_LABEL_ETC_COUNT
     );
 
     return (0);
