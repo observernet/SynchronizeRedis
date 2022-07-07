@@ -204,26 +204,43 @@ int _update_userinfo_stat(char* redis_value, char* user_key, sql_context ctx)
 {
     int today = intDate();
     struct _update_userinfo_stat stat;
+    double reword_amount, exchange_amount;
 
     /* 오라클사용 등록 */
 	struct sqlca sqlca;
 	EXEC SQL CONTEXT USE :ctx;
 
-    /* OBSP를 가져온다 */
+    /* 보상금액을 가져온다 */
     memset(&stat, 0x00, sizeof(struct _update_userinfo_stat));
     EXEC SQL
-        SELECT SUM(A.REWORD_AMOUNT - NVL(A.EXCHANGE_AMOUNT, 0)) INTO :stat.OBSP
+        SELECT NVL(SUM(A.REWORD_AMOUNT), 0) INTO :reword_amount
         FROM REWORD_DETAIL A, REWORD_LIST B
         WHERE A.REWORD_IDX = B.REWORD_IDX
           and A.USER_KEY = :user_key
-          and A.EXCHANGE_STATUS in ('N', 'P')
           and B.PROC_STATUS = 'V';
 
     if ( _SQLNOTOK )
     {
-        Log("_update_userinfo_stat: OBSP를 가져오는 도중 에러가 발생하였습니다 user_key[%s] sqlcode[%d]\n", user_key, sqlca.sqlcode);
+        Log("_update_userinfo_stat: 보상금액을 가져오는 도중 에러가 발생하였습니다 user_key[%s] sqlcode[%d]\n", user_key, sqlca.sqlcode);
         return (SRERR_SYSTEM_ERROR);
     }
+
+    /* 환전금액을 가져온다 */
+    EXEC SQL
+        SELECT NVL(SUM(PROC_AMOUNT + EXCHANGE_FEE), 0) INTO :exchange_amount
+        FROM EXCHANGE_OBSP
+        WHERE USER_KEY = :user_key
+          and PROC_STATUS = 'V';
+
+    if ( _SQLNOTOK )
+    {
+        Log("_update_userinfo_stat: 환전금액을 가져오는 도중 에러가 발생하였습니다 user_key[%s] sqlcode[%d]\n", user_key, sqlca.sqlcode);
+        return (SRERR_SYSTEM_ERROR);
+    }
+
+    /* OBSP를 계산한다 */
+    stat.OBSP = reword_amount - exchange_amount;
+    if ( stat.OBSP < 0 ) stat.OBSP = 0;
 
     /* 마지막 스냅시간과 라벨갯수를 가져온다 */
     EXEC SQL
