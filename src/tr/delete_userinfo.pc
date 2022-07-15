@@ -1,0 +1,57 @@
+/*****************************************************
+ * 프로그램ID	: update_userinfo.pc
+ * 프로그램명	: 사용자 정보를 읽어와 업데이트 한다
+ *****************************************************/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <errno.h>
+
+#include <ft_common.h>
+#include <ora_common.h>
+
+/*************************************************************************************
+ * Defines.....
+ *************************************************************************************/
+
+char program_name[64];
+
+ /*************************************************************************************
+ * 구현 시작..
+ *************************************************************************************/
+
+int	delete_userinfo(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, sql_context ctx)
+{
+    int i;
+    redisReply *reply;
+
+    char user_key[32];
+
+    SetProgramName(pname);
+	mdb = p;
+
+    /* 키갯수를 체크한다 */
+    if ( key->count != 3 )
+    {
+        Log("delete_userinfo: 요청키의 갯수가 올바르지 않습니다. count[%d]\n", key->count);
+        return (SRERR_INCORRECT_KEYCOUNT);
+    }
+    sprintf(user_key, "%s", key->key[2]);
+
+    /* Redis에 값을 올린다 */
+    for ( i = 0 ; i < redis->count ; i++ )
+    {
+        reply = redisCommand(redis->conn[i].c, "DEL %s:%s:%s", key->key[0], key->key[1], user_key);
+        if ( reply == NULL || reply->type == REDIS_REPLY_ERROR )
+        {
+            Log("delete_userinfo: Redis에 값을 삭제 중 에러가 발생하였습니다. host[%s:%d] err[%s]\n", redis->conn[i].host, redis->conn[i].port, reply->str);
+            freeReplyObject(reply);
+            return (SRERR_SYSTEM_ERROR);
+        } 
+        freeReplyObject(reply);
+    }
+	
+	return (SRERR_SUCCESS);
+}

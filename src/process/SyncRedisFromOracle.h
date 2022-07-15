@@ -35,9 +35,7 @@ int   add_epoll(SOCKET fd);
 int   del_epoll(SOCKET fd);
 
 int   ReceiveRequest(SOCKET sockfd);
-int   ProcessUpdate(char* buff);
-int   ProcessDelete(char* buff);
-int   ProcessDeleteAll(char* buff);
+int   ProcessRequest(char* prefix, char* buff);
 int   ParseKeys(char* buff, REDIS_KEYS** rkeys);
 
 int   SendResponse(int user_offset, SRI_REQRES_HEADER* reqHeader, int rcode);

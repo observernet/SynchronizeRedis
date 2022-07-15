@@ -128,7 +128,7 @@ int del_epoll(SOCKET fd)
 int ReceiveRequest(SOCKET sockfd)
 {
     int res, rcv, length;
-    char rcvbuf[MAX_BUFFER];
+    char prefix[64], rcvbuf[MAX_BUFFER];
     SRI_REQRES_HEADER* reqHeader;
 
     int user_offset = GetUserOffset(sockfd);
@@ -169,22 +169,14 @@ int ReceiveRequest(SOCKET sockfd)
     reqHeader = (SRI_REQRES_HEADER*)rcvbuf;
     switch ( reqHeader->trid )
     {
-        case SRI_TRID_UPDATE:
-            res = ProcessUpdate(rcvbuf + sizeof(SRI_REQRES_HEADER));
-            break;
-
-        case SRI_TRID_DELETE:
-            res = ProcessDelete(rcvbuf + sizeof(SRI_REQRES_HEADER));
-            break;
-
-        case SRI_TRID_DELETE_ALL:
-            res = ProcessDeleteAll(rcvbuf + sizeof(SRI_REQRES_HEADER));
-            break;
-
+        case SRI_TRID_UPDATE: sprintf(prefix, "update"); break;
+        case SRI_TRID_DELETE: sprintf(prefix, "delete"); break;
+        case SRI_TRID_DELETE_ALL: sprintf(prefix, "delete_all"); break;
         default:
             Log("ReceiveRequest: 정의되지 않은 처리구분입니다 [%c]\n", reqHeader->trid);
             res = SRERR_UNDEFINED_TRID;
     }
+    res = ProcessRequest(prefix, rcvbuf + sizeof(SRI_REQRES_HEADER));
 
     /* 응답데이타를 전송한다 */
     SendResponse(user_offset, reqHeader, res);
@@ -193,9 +185,9 @@ int ReceiveRequest(SOCKET sockfd)
 }
 
 /**
- * Update를 처리한다
+ * 요청을 처리한다
  */
-int ProcessUpdate(char* buff)
+int ProcessRequest(char* prefix, char* buff)
 {
     int i, key_count;
     REDIS_KEYS* keys;
@@ -210,7 +202,7 @@ int ProcessUpdate(char* buff)
     /* 키를 파싱한다 */
     if ( (key_count = ParseKeys(buff, &keys)) == 0 )
     {
-        Log("ProcessUpdate: 키가 존재하지 않습니다 [%s]\n", buff);
+        Log("ProcessRequest: 키가 존재하지 않습니다 [%s]\n", buff);
         return (SRERR_NOTFOUND_KEY);
     }
 
@@ -218,7 +210,7 @@ int ProcessUpdate(char* buff)
     if ( !(handle = dlopen(dllib_name, RTLD_NOW)) )
     {
         free(keys);
-        Log("ProcessUpdate: 공유라이브러리 오픈실패!! dllib_name[%s] errmsg[%s]\n", dllib_name, dlerror());
+        Log("ProcessRequest: 공유라이브러리 오픈실패!! dllib_name[%s] errmsg[%s]\n", dllib_name, dlerror());
         return (SRERR_SYSTEM_ERROR);
     }
     
@@ -231,14 +223,14 @@ int ProcessUpdate(char* buff)
 
         /* 처리함수명을 가져온다 */
         key1 = toLower(keys[i].key[1]);
-        sprintf(func_name, "update_%s", key1);
+        sprintf(func_name, "%s_%s", prefix, key1);
         free(key1);
         
         /* 처리함수 조회 */
         func = dlsym(handle, func_name);
         if ( dlerror() != NULL )
         {
-            Log("ProcessUpdate: 처리함수 조회 실패!! func_name[%s] errmsg[%s]\n", func_name, dlerror());
+            Log("ProcessRequest: 처리함수 조회 실패!! func_name[%s] errmsg[%s]\n", func_name, dlerror());
             dlclose(handle); free(keys);
             return (SRERR_SYSTEM_ERROR);
         }
@@ -246,7 +238,7 @@ int ProcessUpdate(char* buff)
         /* 처리함수 실행 */
         if ( (res = func(program_name, mdb, &keys[i], &redis, ctx)) != SRERR_SUCCESS )
         {
-            Log("ProcessUpdate: 처리함수 실행 중 에러!! func_name[%s] res[%d]\n", func_name, res);
+            Log("ProcessRequest: 처리함수 실행 중 에러!! func_name[%s] res[%d]\n", func_name, res);
             dlclose(handle); free(keys);
             return (res);
         }
@@ -257,24 +249,6 @@ int ProcessUpdate(char* buff)
     free(keys);
 
     return (SRERR_SUCCESS);
-}
-
-/**
- * Delete를 처리한다
- */
-int ProcessDelete(char* buff)
-{
-
-    return (0);
-}
-
-/**
- * DeleteAll을 처리한다
- */
-int ProcessDeleteAll(char* buff)
-{
-
-    return (0);
 }
 
 /**
