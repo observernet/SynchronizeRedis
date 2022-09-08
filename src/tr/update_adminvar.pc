@@ -25,6 +25,12 @@ struct _update_adminvar_reword
     double      label_etc;
     double      obsp_per_day;
     double      auto_exchange;
+    double      persona;
+};
+
+struct _update_adminvar_wallet
+{
+    char        proc_type;
     char        address[64];
     char        wallet_type;
     char        cert_info[256];
@@ -85,8 +91,8 @@ int	update_adminvar(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, s
     /* 추가로 보상관련 정보도 가져온다 */
     memset(&reword, 0x00, sizeof(struct _update_adminvar_reword));
     EXEC SQL
-        SELECT SNAP, LABEL, LABEL_ETC, OBSP_PER_DAY, AUTO_EXCHANGE, ADDRESS, WALLET_TYPE, CERT_INFO
-          INTO :reword.snap, :reword.label, :reword.label_etc, :reword.obsp_per_day, :reword.auto_exchange, :reword.address, :reword.wallet_type, :reword.cert_info
+        SELECT SNAP, LABEL, LABEL_ETC, OBSP_PER_DAY, AUTO_EXCHANGE, PERSONA
+          INTO :reword.snap, :reword.label, :reword.label_etc, :reword.obsp_per_day, :reword.auto_exchange, :reword.persona
         FROM CONFIG_REWORD
         WHERE APP_NAME = :admin_key;
     
@@ -95,13 +101,58 @@ int	update_adminvar(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, s
         Log("update_adminvar: 보상 정보를 가져오는 도중 에러가 발생하였습니다 sqlcode[%d]\n", sqlca.sqlcode);
         return (SRERR_SYSTEM_ERROR);
     }
-    str_trim(reword.address, TRIM_ALL);
-    str_trim(reword.cert_info, TRIM_ALL);
 
     /* Redis에 올릴 값을 세팅한다 */
     ptr = strlen(redis_value) - 1;
-    sprintf(&redis_value[ptr], ", \"reword\": {\"snap\": %.2lf, \"label\": %.2lf, \"label_etc\": %.2lf, \"obsp_per_day\": %.2lf, \"auto_exchange\": %.2lf, \"wallet\": {\"address\": \"%s\", \"type\": \"%c\", \"cert\": \"%s\"}}}",
-                               reword.snap, reword.label, reword.label_etc, reword.obsp_per_day, reword.auto_exchange, reword.address, reword.wallet_type, reword.cert_info);
+    sprintf(&redis_value[ptr], ", \"reword\": {\"snap\": %.2lf, \"label\": %.2lf, \"label_etc\": %.2lf, \"obsp_per_day\": %.2lf, \"auto_exchange\": %.2lf, \"persona\": %.2lf}}",
+                               reword.snap, reword.label, reword.label_etc, reword.obsp_per_day, reword.auto_exchange, reword.persona);
+
+    /* 지갑 관련 정보를 가져온다 */
+    EXEC SQL DECLARE _GET_WALLET_LIST CURSOR FOR
+        SELECT PROC_TYPE, ADDRESS, WALLET_TYPE, CERT_INFO
+        FROM CONFIG_WALLET
+        WHERE APP_NAME = :admin_key
+          and IS_USE = 'Y';
+    
+    EXEC SQL OPEN _GET_WALLET_LIST;
+	if ( _SQLOK )
+	{
+        struct _update_adminvar_wallet wallet;
+
+        ptr = strlen(redis_value) - 1;
+        sprintf(&redis_value[ptr], ", \"wallet\": {");
+
+		while ( 1 )
+		{
+            memset(&wallet, 0x00, sizeof(struct _update_adminvar_wallet));
+			EXEC SQL FETCH _GET_WALLET_LIST INTO :wallet.proc_type, :wallet.address, :wallet.wallet_type, :wallet.cert_info;
+
+			if ( _SQLNOTFOUND ) break;
+            str_trim(wallet.address, TRIM_ALL);
+            str_trim(wallet.cert_info, TRIM_ALL);
+			
+            if ( wallet.proc_type == 'E' )
+            {
+                ptr = strlen(redis_value);
+                sprintf(&redis_value[ptr], "\"exchange\": {\"address\": \"%s\", \"type\": \"%c\", \"cert\": \"%s\"},", wallet.address, wallet.wallet_type, wallet.cert_info);
+            }
+
+            if ( wallet.proc_type == 'W' )
+            {
+                ptr = strlen(redis_value);
+                sprintf(&redis_value[ptr], "\"withdraw\": {\"address\": \"%s\", \"type\": \"%c\", \"cert\": \"%s\"},", wallet.address, wallet.wallet_type, wallet.cert_info);
+            }
+		}
+
+        ptr = strlen(redis_value) - 1;
+        sprintf(&redis_value[ptr], "}}");
+	}
+	else
+	{
+		Log("update_adminvar: 전솔수수료를 가져오는 도중 에러가 발생하였습니다 sqlcode[%d]\n", sqlca.sqlcode);
+        return (SRERR_SYSTEM_ERROR);
+	}
+	EXEC SQL CLOSE _GET_WALLET_LIST;
 
     /* 전송수수료 관련 정보를 가져온다 */
     EXEC SQL DECLARE _GET_TXFEE_LIST CURSOR FOR

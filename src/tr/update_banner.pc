@@ -24,8 +24,10 @@ struct _update_banner
 {
     char        title[256];
     char        image[128];
+    char        image_full[256];
     char        link[512];
     char        lang;
+    long        expire_time;
 };
 
  /*************************************************************************************
@@ -39,6 +41,7 @@ int	update_banner(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, sql
     char record[MAX_BUFFER];
     redisReply *reply;
 
+    time_t curtime;
     char app_name[64];
     struct _update_banner banner;
 
@@ -58,14 +61,16 @@ int	update_banner(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, sql
     sprintf(app_name, "%%%s%%", key->key[0]);
 
     EXEC SQL DECLARE _GET_BANNER_LIST CURSOR FOR
-        SELECT TITLE, NVL(IMAGE, ' '), NVL(LINK, ' '), LANG
+        SELECT TITLE, NVL(IMAGE, ' '), NVL(LINK, ' '), LANG, DATE_TO_UNIXTIME(EXPIRE_DATE)
         FROM MAIN_BANNER
-        WHERE APP_NAME like :app_name
-          and IS_USE = 'Y';
+        WHERE IS_USE = 'Y'
+        ORDER BY SORT desc, IDX desc;
     
     EXEC SQL OPEN _GET_BANNER_LIST;
 	if ( _SQLOK )
 	{
+        time(&curtime);
+
         /* Redis에 올릴 값을 세팅한다 */
         redis_value = realloc(redis_value, _BANNER_OVERHEAD);
         sprintf(redis_value, "{\"list\":[");
@@ -73,16 +78,29 @@ int	update_banner(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, sql
 		while ( 1 )
 		{
             memset(&banner, 0x00, sizeof(struct _update_banner));
-			EXEC SQL FETCH _GET_BANNER_LIST INTO :banner.title, :banner.image, :banner.link, :banner.lang;
+			EXEC SQL FETCH _GET_BANNER_LIST INTO :banner.title, :banner.image, :banner.link, :banner.lang, :banner.expire_time;
 
 			if ( _SQLNOTFOUND ) break;
             str_trim(banner.title, TRIM_ALL);
             str_trim(banner.image, TRIM_ALL);
             str_trim(banner.link, TRIM_ALL);
+
+            /* 만료일이 지난건 건너뛴다 */
+            if ( banner.expire_time < curtime ) continue;
+
+            /* 이미지 주소를 변환한다 */
+            sprintf(banner.image_full, "https://photoapp.obsr-app.org/admimg%s", banner.image);
+
+            /* 링크를 변환한다 */
+            if ( strstr(banner.link, "http") == 0 )
+            {
+                int id = atoi(banner.link);
+                sprintf(banner.link, "PhotoApp:Notice:%d", id);
+            }
 			
             /* 레코드를 세팅한다 */
             memset(record, 0x00, MAX_BUFFER);
-            sprintf(record, "{\"TITLE\":\"%s\",\"IMAGE\":\"%s\",\"LINK\":\"%s\",\"LANG\":\"%c\"}", banner.title, banner.image, banner.link, banner.lang);
+            sprintf(record, "{\"TITLE\":\"%s\",\"IMAGE\":\"%s\",\"LINK\":\"%s\",\"LANG\":\"%c\",\"EXPIRE\":%ld}", banner.title, banner.image_full, banner.link, banner.lang, banner.expire_time * 1000);
 
             /* Redis에 올릴 값을 세팅한다 */
             ptr = strlen(redis_value);
