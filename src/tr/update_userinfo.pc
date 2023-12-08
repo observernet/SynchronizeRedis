@@ -30,6 +30,7 @@ struct _update_userinfo_info
     int         USER_LEVEL;
     char        STATUS;
     char        ABUSE_REASON[256];
+    char        MAIN_LANG;
 };
 
 struct _update_userinfo_wallet
@@ -112,8 +113,8 @@ int _update_userinfo_info(char* redis_value, char* user_key, sql_context ctx)
     /* DB에서 사용자 정보를 가져온다 */
     memset(&user, 0x00, sizeof(struct _update_userinfo_info));
     EXEC SQL
-        SELECT USER_KEY, NCODE, PHONE, NVL(EMAIL, ' '), NVL(NAME, ' '), NVL(PHOTO, ' '), PROMOTION, USER_LEVEL, STATUS, NVL(ABUSE_REASON, ' ')
-          INTO :user.USER_KEY, :user.NCODE, :user.PHONE, :user.EMAIL, :user.NAME, :user.PHOTO, :user.PROMOTION, :user.USER_LEVEL, :user.STATUS, :user.ABUSE_REASON
+        SELECT USER_KEY, NCODE, PHONE, NVL(EMAIL, ' '), NVL(NAME, ' '), NVL(PHOTO, ' '), PROMOTION, USER_LEVEL, STATUS, NVL(ABUSE_REASON, ' '), NVL(MAIN_LANG, 'K')
+          INTO :user.USER_KEY, :user.NCODE, :user.PHONE, :user.EMAIL, :user.NAME, :user.PHOTO, :user.PROMOTION, :user.USER_LEVEL, :user.STATUS, :user.ABUSE_REASON, :user.MAIN_LANG
         FROM USER_INFO 
         WHERE USER_KEY = :user_key;
     
@@ -141,9 +142,10 @@ int _update_userinfo_info(char* redis_value, char* user_key, sql_context ctx)
                          "\"PROMOTION\":\"%c\","
                          "\"USER_LEVEL\":%d,"
                          "\"STATUS\":\"%c\","
-                         "\"ABUSE_REASON\":\"%s\""
+                         "\"ABUSE_REASON\":\"%s\","
+                         "\"MAIN_LANG\":\"%c\""
                          "}",
-                         user.USER_KEY, user.NCODE, user.PHONE, user.EMAIL, user.NAME, user.PHOTO, user.PROMOTION, user.USER_LEVEL, user.STATUS, user.ABUSE_REASON
+                         user.USER_KEY, user.NCODE, user.PHONE, user.EMAIL, user.NAME, user.PHOTO, user.PROMOTION, user.USER_LEVEL, user.STATUS, user.ABUSE_REASON, user.MAIN_LANG
     );
 
     return (0);
@@ -301,7 +303,7 @@ int _update_userinfo_stat(char* redis_value, char* user_key, sql_context ctx)
 
     /* Redis에 올릴 값을 세팅한다 (사용자정보) */
     sprintf(redis_value, "{"
-                         "\"OBSP\":%.2lf,"
+                         "\"OBSP\":%.8lf,"
                          "\"LABEL_COUNT\":%d,"
                          "\"LAST_SNAP_TIME\":%ld,"
                          "\"TODAY_SNAP_COUNT\":%d,"

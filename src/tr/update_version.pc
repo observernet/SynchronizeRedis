@@ -21,8 +21,11 @@ char program_name[64];
 struct _update_version
 {
     char        android[64];
+    char        android_min[64];
     char        ios[64];
+    char        ios_min[64];
     char        web[64];
+    char        web_min[64];
 };
 
  /*************************************************************************************
@@ -56,7 +59,7 @@ int	update_version(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, sq
     /* DB에서 버전 정보를 가져온다 */
     memset(&version, 0x00, sizeof(struct _update_version));
     EXEC SQL
-        SELECT ANDROID, IOS, WEB INTO :version.android, :version.ios, :version.web
+        SELECT ANDROID, ANDROID_MIN, IOS, IOS_MIN, WEB, WEB_MIN INTO :version.android, :version.android_min, :version.ios, :version.ios_min, :version.web, :version.web_min
         FROM VERSION_INFO 
         WHERE APP_NAME = :version_key;
     
@@ -66,11 +69,14 @@ int	update_version(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, sq
         return (SRERR_SYSTEM_ERROR);
     }
     str_trim(version.android, TRIM_ALL);
+    str_trim(version.android_min, TRIM_ALL);
     str_trim(version.ios, TRIM_ALL);
+    str_trim(version.ios_min, TRIM_ALL);
     str_trim(version.web, TRIM_ALL);
+    str_trim(version.web_min, TRIM_ALL);
 
     /* Redis에 올릴 값을 세팅한다 (사용자정보) */
-    sprintf(redis_value, "{\"android\":\"%s\",\"ios\":\"%s\",\"web\":\"%s\"}", version.android, version.ios, version.web);
+    sprintf(redis_value, "{\"android\":\"%s\",\"android_min\":\"%s\",\"ios\":\"%s\",\"ios_min\":\"%s\",\"web\":\"%s\",\"web_min\":\"%s\"}", version.android, version.android_min, version.ios, version.ios_min, version.web, version.web_min);
 
     /* Redis에 값을 올린다 */
     for ( i = 0 ; i < redis->count ; i++ )

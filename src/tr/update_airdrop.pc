@@ -1,0 +1,100 @@
+/*****************************************************
+ * 프로그램ID	: update_airdrop.pc
+ * 프로그램명	: 에어드롭 정보를 읽어와 업데이트 한다
+ *****************************************************/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <errno.h>
+
+#include <ft_common.h>
+#include <ora_common.h>
+
+/*************************************************************************************
+ * Defines.....
+ *************************************************************************************/
+
+char program_name[64];
+
+ /*************************************************************************************
+ * 구현 시작..
+ *************************************************************************************/
+
+int	update_airdrop(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, sql_context ctx)
+{
+    int i, ptr;
+    char redis_value[MAX_BUFFER*8];
+    redisReply *reply;
+
+    int airdrop_key;
+    char admin_key[64], airdrop_var[4096];
+
+    SetProgramName(pname);
+	mdb = p;
+
+    /* 오라클사용 등록 */
+	struct sqlca sqlca;
+	EXEC SQL CONTEXT USE :ctx;
+
+    /* 키갯수를 체크한다 */
+    if ( key->count != 2 )
+    {
+        Log("update_airdrop: 요청키의 갯수가 올바르지 않습니다. count[%d]\n", key->count);
+        return (SRERR_INCORRECT_KEYCOUNT);
+    }
+    sprintf(admin_key, "%s", key->key[0]);
+
+    /* DB에서 설정 정보를 가져온다 */
+    EXEC SQL DECLARE _GET_AIRDROP_LIST CURSOR FOR
+        SELECT IDX, AIRDROP_VAR INTO :airdrop_key, :airdrop_var
+        FROM AIRDROP
+        WHERE APP_NAME = :admin_key
+          and IS_USE = 'Y';
+    
+    EXEC SQL OPEN _GET_AIRDROP_LIST;
+	if ( _SQLOK )
+	{
+        sprintf(redis_value, "{");
+        
+		while ( 1 )
+		{
+            memset(airdrop_var, 0x00, 4096);
+			EXEC SQL FETCH _GET_AIRDROP_LIST INTO :airdrop_key, :airdrop_var;
+
+			if ( _SQLNOTFOUND ) break;
+            str_trim(airdrop_var, TRIM_ALL);
+
+            /* Redis에 올릴 값을 세팅한다 */
+            ptr = strlen(redis_value);
+            sprintf(&redis_value[ptr], "\"%d\":%s,", airdrop_key, airdrop_var);
+		}
+
+        /* Redis에 올릴 값을 세팅한다 */
+        ptr = strlen(redis_value);
+        if ( ptr > 10 ) ptr = ptr - 1;
+        sprintf(&redis_value[ptr], "}");
+	}
+	else
+	{
+		Log("update_airdrop: 리스트를 가져오는 도중 에러가 발생하였습니다 app_name[%s] sqlcode[%d]\n", admin_key, sqlca.sqlcode);
+        return (SRERR_SYSTEM_ERROR);
+	}
+	EXEC SQL CLOSE _GET_AIRDROP_LIST;
+
+    /* Redis에 값을 올린다 */
+    for ( i = 0 ; i < redis->count ; i++ )
+    {
+        reply = redisCommand(redis->conn[i].c, "SET %s:%s %s", key->key[0], key->key[1], redis_value);
+        if ( reply == NULL || reply->type == REDIS_REPLY_ERROR )
+        {
+            Log("update_airdrop: Redis에 값을 올리는 중 에러가 발생하였습니다. host[%s:%d] err[%s]\n", redis->conn[i].host, redis->conn[i].port, reply->str);
+            freeReplyObject(reply);
+            return (SRERR_SYSTEM_ERROR);
+        } 
+        freeReplyObject(reply);
+    }
+	
+	return (SRERR_SUCCESS);
+}

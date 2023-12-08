@@ -92,11 +92,11 @@ int	update_banner(char* pname, COMMON_SHM* p, REDIS_KEYS* key, REDIS* redis, sql
             sprintf(banner.image_full, "https://photoapp.obsr-app.org/admimg%s", banner.image);
 
             /* 링크를 변환한다 */
-            if ( strstr(banner.link, "http") == 0 )
-            {
-                int id = atoi(banner.link);
-                sprintf(banner.link, "PhotoApp:Notice:%d", id);
-            }
+            //if ( strstr(banner.link, "http") == 0 )
+            //{
+            //    int id = atoi(banner.link);
+            //    sprintf(banner.link, "PhotoApp:Notice:%d", id);
+            //}
 			
             /* 레코드를 세팅한다 */
             memset(record, 0x00, MAX_BUFFER);
